@@ -1,13 +1,18 @@
-# 在AstrBot中，你可以这样实现：
-from astrbot.core import AstrBot
-from astrbot.event import GroupMessageEvent
+from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
+from astrbot.api.star import Context, Star, register
+from astrbot.api import logger
 
-bot = AstrBot()
+@register("xmhelp", "XMUtils", "筱鸣壹形功能帮助插件", "1.0.0")
+class XMHelpPlugin(Star):
+    def __init__(self, context: Context):
+        super().__init__(context)
 
-@bot.on_message(group=True)
-async def handle_group_message(event: GroupMessageEvent):
-    # 检查消息内容
-    if "xmhelp" in event.message:
+    async def initialize(self):
+        """插件初始化方法"""
+
+    @filter.command("xmhelp")
+    async def xmhelp(self, event: AstrMessageEvent):
+        """呼出筱鸣壹形帮助信息"""
         help_msg = (
             "-----筱鸣壹形β食用说明-----\n"
             "[xmds]\ndeepseek对话（25.2.6new）\n"
@@ -21,4 +26,7 @@ async def handle_group_message(event: GroupMessageEvent):
             "[xmtp]\n台风信息\n"
             "---祝您使用愉快2023/8/2---"
         )
-        await event.reply(help_msg)
+        yield event.plain_result(help_msg)
+
+    async def terminate(self):
+        """插件销毁方法"""
