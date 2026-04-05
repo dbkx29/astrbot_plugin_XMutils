@@ -1,3 +1,4 @@
+# Package initializer for methods module
 """呼出筱鸣壹形帮助信息"""
 help_msg = (
     "-----筱鸣壹形β食用说明-----\n"
