@@ -1,20 +1,39 @@
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
+from datetime import date
+import random
 
 class XMutils(Star):
     def __init__(self, context: Context):
         super().__init__(context)
 
+    @staticmethod
+    def luck_simple(num):
+        res = ""
+        if num == 100:
+            res = '吉星高照'
+        elif num >= 90:
+            res = '鸿运当头'
+        elif num >= 70:
+            res = '好运相随'
+        elif num >= 50:
+            res = '一帆风顺'
+        elif num >= 30:
+            res = '风平浪静'
+        elif num >= 10:
+            res = '一波三折'
+        elif num > 1:
+            res = '诸事不顺'
+        else:
+            res = '厄运缠身'
+        return [res, int(num/10+1)]
+
     async def initialize(self):
         """插件初始化方法"""
 
-    @filter.command_group("xm")
-    def xm(self):
-        pass
-
-    @filter.command("help")
-    async def help(self, event: AstrMessageEvent):
+    @filter.command("xmhelp")
+    async def xmhelp(self, event: AstrMessageEvent):
         help_msg = (
             "-----筱鸣壹形β食用说明-----\n"
             "[xmhelp]用于呼出此说明\n"
@@ -33,7 +52,19 @@ class XMutils(Star):
         message_chain = event.get_messages() # 用户所发的消息的消息链 # from astrbot.api.message_components import *
         logger.info(message_chain)
         yield event.plain_result(help_msg)
-
+        
+    @filter.command("xmjrrp")
+    async def xmjrrp(self, event: AstrMessageEvent):
+        qid = event.get_user_id()
+        
+        rnd = random.Random()
+        rnd.seed(int(date.today().strftime("%y%m%d")) + int(qid))
+        lucknum = rnd.randint(1, 100)
+        
+        res = self.luck_simple(lucknum)[0]
+        msg = f"您今日的幸运指数是{lucknum}/100,为{res}."
+        
+        yield event.plain_result(msg)
 
     async def terminate(self):
         """插件销毁方法"""
