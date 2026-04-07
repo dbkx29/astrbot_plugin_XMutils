@@ -55,7 +55,7 @@ class XMutils(Star):
         
     @filter.command("xmjrrp")
     async def xmjrrp(self, event: AstrMessageEvent):
-        qid = event.get_user_id()
+        qid = event.message_obj.sender # 获取用户id
         
         rnd = random.Random()
         rnd.seed(int(date.today().strftime("%y%m%d")) + int(qid))
