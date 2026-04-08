@@ -72,29 +72,28 @@ class XMutils(Star):
         dice = int(result[0][1])
         if num>233 or dice>114514:
             yield event.plain_result("InvalidUserInputException")
-            pass
+        else:   
+            send_msg=""
+            arr = []
+            for i in range(num):
+                arr.append(random.randint(1, dice))
 
-        send_msg=""
-        arr = []
-        for i in range(num):
-            arr.append(random.randint(1, dice))
+            arr.sort()
+            send_msg+=f"({sum(arr)})"
+            for i in range(num):
+                send_msg+=f"{arr[i]}+"
+            send_msg=send_msg[:-1] #删除尾部加号
 
-        arr.sort()
-        send_msg+=f"({sum(arr)})"
-        for i in range(num):
-            send_msg+=f"{arr[i]}+"
-        send_msg=send_msg[:-1] #删除尾部加号
-
-        
-        from astrbot.api.message_components import Node, Plain
-        node = Node(
-            uin=2485981440,
-            name="🎲骰娘🎲",
-            content=[
-                Plain(send_msg),
-            ]
-        )
-        yield event.chain_result([node])
+            
+            from astrbot.api.message_components import Node, Plain
+            node = Node(
+                uin=2485981440,
+                name="🎲骰娘🎲",
+                content=[
+                    Plain(send_msg),
+                ]
+            )
+            yield event.chain_result([node])
         
         
         
