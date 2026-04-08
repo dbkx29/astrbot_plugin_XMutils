@@ -85,7 +85,7 @@ class XMutils(Star):
             send_msg+=f"{arr[i]}+"
         send_msg=send_msg[:-2] #删除尾部加号
         
-
+        from astrbot.api.message_components import Node, Plain
         node = Node(
             uin=2485981440,
             name="🎲骰娘🎲",
