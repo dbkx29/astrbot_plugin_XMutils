@@ -80,10 +80,9 @@ class XMutils(Star):
             arr.append(random.randint(1, dice))
 
         arr.sort()
-        send_msg+=f"{sum(arr)}"
+        send_msg+=f"{(sum(arr))}"
         for i in range(num):
-            send_msg+=f"{arr[i]}+"
-        send_msg=send_msg[:-2] #删除尾部加号
+            send_msg+=f"{arr[i]}, "
         
         from astrbot.api.message_components import Node, Plain
         node = Node(
