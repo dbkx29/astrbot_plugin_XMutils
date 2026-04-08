@@ -38,14 +38,14 @@ class XMutils(Star):
             "-----筱鸣壹形β食用说明-----\n"
             "[xmhelp]用于呼出此说明\n"
             "[xmjrrp]用于查看今日人品\n"
-            "[xmsetu]用于获取随机涩图\n"
-            "[b站视频链接]b站视频解析\n"
-            "[摸/膜/吃/捅/@昵称]对指定用户做出指定行为\n"
-            "[xmeat]觅食成贤\n"
             "[xmdice (\d+)d(\d+)]\n骰子\n"
-            "[xmtp]台风信息\n"
+            "[xmeat]觅食成贤\n"
+            "[xmsetu]用于获取随机涩图\n"
+            "[摸/膜/吃/捅/@昵称]对指定用户做出指定行为\n"
+            "[xmtp]台风信息\n\n"
             "\n+++++++已弃用+++++++\n"
             "[xmds]\ndeepseek对话(2025/2/6 new!!!!!)\n"
+            "[b站视频链接]b站视频解析\n"
             "---祝您使用愉快2023/8/2---"
             "---祝您使用愉快2026/4/5---"
         )
@@ -65,6 +65,41 @@ class XMutils(Star):
         msg = f"您今日的幸运指数是{lucknum}/100,为{res}."
         
         yield event.plain_result(msg)
+    @filter.command("xmdice")
+    async def xmdice(self, event: AstrMessageEvent, incantation:str):
+        result = re.findall(r"(\d+)d(\d+)", str(incantation))
+        num = int(result[0][0])
+        dice = int(result[0][1])
+        if num>233 or dice>114514:
+            yield event.plain_result("InvalidUserInputException")
+            pass
+
+        send_msg=""
+        arr = []
+        for i in range(num):
+            arr.append(random.randint(1, dice))
+
+        arr.sort()
+        send_msg.append(f"{sum(arr)}(")
+        for i in range(num):
+            if i == num-1:
+                send_msg.append(f"{arr[i]})")
+            else:
+                send_msg.append(f"{arr[i]}+")
+        
+
+
+        node = Node(
+            uin=2485981440,
+            name="🎲骰娘🎲",
+            content=[
+                Plain(send_msg),
+            ]
+        )
+        yield event.chain_result([node])
+        
+        
+        
 
     async def terminate(self):
         """插件销毁方法"""
