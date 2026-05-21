@@ -64,10 +64,22 @@ class XMutils(Star):
     @filter.command("xmhelp")
     async def xmhelp(self, event: AstrMessageEvent):
         help_msg = (
-            "-----小明工具插件说明-----\n"
-            "[xmhelp] 用于呼出这份说明\n"
-            "[xmjrrp] 用于查看今日人品\n"
-            "[xmdice 3d6 2d10] 掷骰，支持空格、+、中英文逗号和换行分隔多个骰式\n"
+            "-----筱鸣壹形β食用说明-----\n"
+            "[xmhelp]用于呼出此说明\n"
+            "[xmjrrp]用于查看今日人品\n"
+            "[xmdice (\d+)d(\d+)]\n骰子\n"
+
+            "\n+++++++未复活+++++++\n"
+            "[xmeat]觅食成贤\n"
+            "[xmsetu]用于获取随机涩图\n"
+            "[摸/膜/吃/捅/@昵称]对指定用户做出指定行为\n"
+            "[xmtp]台风信息\n\n"
+            
+            "\n+++++++已弃用+++++++\n"
+            "[xmds]\ndeepseek对话(2025/2/6 new!!!!!)\n"
+            "[b站视频链接]b站视频解析\n"
+            "---祝您使用愉快2023/8/2---"
+            "---祝您使用愉快2026/4/5---"
         )
         message_chain = event.get_messages()
         logger.info(message_chain)
