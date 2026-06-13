@@ -61,7 +61,7 @@ class XMutils(Star):
     async def initialize(self):
         """插件初始化方法"""
 
-    @filter.command("xmhelp")
+    @filter.command("help")
     async def xmhelp(self, event: AstrMessageEvent):
         help_msg = (
             "-----筱鸣壹形β食用说明-----\n"
@@ -85,7 +85,7 @@ class XMutils(Star):
         logger.info(message_chain)
         yield event.plain_result(help_msg)
 
-    @filter.command("xmjrrp")
+    @filter.command("jrrp")
     async def xmjrrp(self, event: AstrMessageEvent):
         qid = event.message_obj.sender.user_id
 
@@ -94,11 +94,11 @@ class XMutils(Star):
         lucknum = rnd.randint(1, 100)
 
         res = self.luck_simple(lucknum)[0]
-        msg = f"您今日的幸运指数是 {lucknum}/100，{res}。"
+        msg = f"您今日的幸运指数是 {lucknum}/100, 为{res}。"
 
         yield event.plain_result(msg)
 
-    @filter.command("xmdice")
+    @filter.command("dice")
     async def xmdice(self, event: AstrMessageEvent, incantation: str):
         result = self.parse_dice_expressions(incantation)
         if result is None or not result:
