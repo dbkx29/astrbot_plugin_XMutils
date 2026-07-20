@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import random
 import re
 
@@ -106,10 +106,8 @@ class XMutils(Star):
             if isinstance(agencies, list):
                 agencies = "、".join(str(item) for item in agencies)
 
-            title = storm.get("title", storm_id)
-            place = storm.get("place", "未知")
             content_lines = [
-                f"{title}, 数据提供机构:{agencies}, 位置:{place}",
+                f"{storm.get('title', storm_id)}, 数据提供机构:{agencies}, 位置:{storm.get('place', '未知')}",
             ]
 
             latest_forecast = next(
@@ -139,22 +137,42 @@ class XMutils(Star):
 
         return messages
 
+    @staticmethod
+    def find_latest_radar_url():
+        current_time = datetime.now()
+        minute = (current_time.minute // 6) * 6
+        utc_time = datetime.utcnow().replace(minute=minute, second=0, microsecond=0)
+
+        for _ in range(40):
+            url = (
+                f"https://image.nmc.cn/product/{utc_time:%Y}/{utc_time:%m}/{utc_time:%d}/RDCP/"
+                f"SEVP_AOC_RDCP_SLDAS3_ECREF_AECN_L88_PI_{utc_time:%Y%m%d%H%M}00000.PNG"
+            )
+            response = requests.get(url, allow_redirects=True, timeout=15.05)
+            if response.status_code == 200:
+                return url
+            utc_time -= timedelta(minutes=6)
+
+        raise RuntimeError("未找到可用的华东雷达图")
+
     async def initialize(self):
         """插件初始化方法"""
 
+    @filter.command("xmhelp")
     @filter.command("help")
     async def xmhelp(self, event: AstrMessageEvent):
         help_msg = (
             "-----小明工具插件说明-----\n"
             "[xmhelp] 用于呼出这份说明\n"
             "[xmjrrp] 用于查看今日人品\n"
-            "[xmdice 3d6 2d10] 掷骰，支持+、中英文逗号和换行分隔多个骰式\n"
+            "[xmdice 3d6 2d10] 掷骰，支持空格、+、中英文逗号和换行分隔多个骰式\n"
             "[xmtp] 台风信息\n"
+            "[xmrd] 华东雷达图\n"
         )
-        message_chain = event.get_messages()
-        logger.info(message_chain)
+        logger.info(event.get_messages())
         yield event.plain_result(help_msg)
 
+    @filter.command("xmjrrp")
     @filter.command("jrrp")
     async def xmjrrp(self, event: AstrMessageEvent):
         qid = event.message_obj.sender.user_id
@@ -165,9 +183,9 @@ class XMutils(Star):
 
         res = self.luck_simple(lucknum)[0]
         msg = f"您今日的幸运指数是 {lucknum}/100，{res}。"
-
         yield event.plain_result(msg)
 
+    @filter.command("xmdice")
     @filter.command("dice")
     async def xmdice(self, event: AstrMessageEvent, incantation: str):
         result = self.parse_dice_expressions(incantation)
@@ -186,14 +204,12 @@ class XMutils(Star):
             total_sum += subtotal
             parts.append(f"{subtotal}({'+'.join(str(item) for item in rolls)})")
 
-        send_msg = f"{total_sum}=" + "+".join(parts)
-
         from astrbot.api.message_components import Node, Plain
 
         node = Node(
             uin=self.resolve_sender_id(event),
             name="骰娘",
-            content=[Plain(send_msg)],
+            content=[Plain(f"{total_sum}=" + "+".join(parts))],
         )
         yield event.chain_result([node])
 
@@ -212,6 +228,25 @@ class XMutils(Star):
             return
 
         yield event.chain_result(messages)
+
+    @filter.command("xmrd")
+    @filter.command("rd")
+    async def xmrd(self, event: AstrMessageEvent):
+        try:
+            radar_url = self.find_latest_radar_url()
+        except Exception as exc:
+            logger.exception("Failed to fetch radar image")
+            yield event.plain_result(f"获取华东雷达图失败: {exc}")
+            return
+
+        from astrbot.api.message_components import Image, Plain
+
+        yield event.chain_result(
+            [
+                Plain("https://www.nmc.cn/publish/radar/huadong.html\n"),
+                Image.fromURL(radar_url),
+            ]
+        )
 
     async def terminate(self):
         """插件销毁方法"""
