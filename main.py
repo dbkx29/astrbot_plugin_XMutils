@@ -1,6 +1,8 @@
-from datetime import date
+from datetime import date, datetime
 import random
 import re
+
+import requests
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -39,7 +41,6 @@ class XMutils(Star):
 
     @staticmethod
     def luck_simple(num):
-        res = ""
         if num == 100:
             res = "吉星高照"
         elif num >= 90:
@@ -58,28 +59,97 @@ class XMutils(Star):
             res = "厄运缠身"
         return [res, int(num / 10 + 1)]
 
+    @staticmethod
+    def resolve_sender_id(event: AstrMessageEvent) -> int:
+        candidates = [
+            getattr(event, "self_id", None),
+            getattr(getattr(event, "message_obj", None), "self_id", None),
+            getattr(getattr(event, "bot", None), "self_id", None),
+        ]
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            try:
+                return int(candidate)
+            except (TypeError, ValueError):
+                continue
+        return 2485981440
+
+    @staticmethod
+    def fetch_storm_messages(self_id: int):
+        from astrbot.api.message_components import Node, Plain
+
+        current_time = datetime.utcnow()
+        query_time = (
+            f"{current_time.year}-{current_time.month:02d}-{current_time.day:02d}"
+            f"T{current_time.hour:02d}:00Z"
+        )
+        list_url = f"https://zoom.earth/data/storms/?date={query_time}&to=12"
+        headers = {
+            "User-Agent": "XMutils/1.0",
+            "Accept": "*/*",
+            "Connection": "keep-alive",
+        }
+
+        response = requests.get(list_url, headers=headers, timeout=15.05)
+        response.raise_for_status()
+        storm_ids = response.json().get("storms", [])
+
+        messages = []
+        for storm_id in storm_ids:
+            storm_url = f"https://zoom.earth/data/storms/?id={storm_id}&lang=zh"
+            storm_response = requests.get(storm_url, headers=headers, timeout=15.05)
+            storm_response.raise_for_status()
+            storm = storm_response.json()
+
+            agencies = storm.get("agencies", "")
+            if isinstance(agencies, list):
+                agencies = "、".join(str(item) for item in agencies)
+
+            title = storm.get("title", storm_id)
+            place = storm.get("place", "未知")
+            content_lines = [
+                f"{title}, 数据提供机构:{agencies}, 位置:{place}",
+            ]
+
+            latest_forecast = next(
+                (track for track in storm.get("track", []) if track.get("forecast") is True),
+                None,
+            )
+            if latest_forecast:
+                content_lines.extend(
+                    [
+                        "最新预测:",
+                        f"时间:{latest_forecast.get('date', '未知')}",
+                        f"风速:{latest_forecast.get('wind', '未知')}km/h",
+                        f"描述:{latest_forecast.get('description', '暂无描述')}",
+                        f"https://zoom.earth/storms/{storm.get('id', storm_id)}/#overlays=wind",
+                    ]
+                )
+            else:
+                content_lines.append("暂无可用预测数据")
+
+            messages.append(
+                Node(
+                    uin=int(self_id),
+                    name="鸣卫贰@筱鸣壹形β",
+                    content=[Plain("\n".join(content_lines))],
+                )
+            )
+
+        return messages
+
     async def initialize(self):
         """插件初始化方法"""
 
     @filter.command("help")
     async def xmhelp(self, event: AstrMessageEvent):
         help_msg = (
-            "-----筱鸣壹形β食用说明-----\n"
-            "[xmhelp]用于呼出此说明\n"
-            "[xmjrrp]用于查看今日人品\n"
-            "[xmdice (\d+)d(\d+)]\n骰子\n"
-
-            "\n+++++++未复活+++++++\n"
-            "[xmeat]觅食成贤\n"
-            "[xmsetu]用于获取随机涩图\n"
-            "[摸/膜/吃/捅/@昵称]对指定用户做出指定行为\n"
-            "[xmtp]台风信息\n\n"
-            
-            "\n+++++++已弃用+++++++\n"
-            "[xmds]\ndeepseek对话(2025/2/6 new!!!!!)\n"
-            "[b站视频链接]b站视频解析\n"
-            "---祝您使用愉快2023/8/2---"
-            "---祝您使用愉快2026/4/5---"
+            "-----小明工具插件说明-----\n"
+            "[xmhelp] 用于呼出这份说明\n"
+            "[xmjrrp] 用于查看今日人品\n"
+            "[xmdice 3d6 2d10] 掷骰，支持+、中英文逗号和换行分隔多个骰式\n"
+            "[xmtp] 台风信息\n"
         )
         message_chain = event.get_messages()
         logger.info(message_chain)
@@ -94,7 +164,7 @@ class XMutils(Star):
         lucknum = rnd.randint(1, 100)
 
         res = self.luck_simple(lucknum)[0]
-        msg = f"您今日的幸运指数是 {lucknum}/100, 为{res}。"
+        msg = f"您今日的幸运指数是 {lucknum}/100，{res}。"
 
         yield event.plain_result(msg)
 
@@ -121,13 +191,27 @@ class XMutils(Star):
         from astrbot.api.message_components import Node, Plain
 
         node = Node(
-            uin=2485981440,
+            uin=self.resolve_sender_id(event),
             name="骰娘",
-            content=[
-                Plain(send_msg),
-            ],
+            content=[Plain(send_msg)],
         )
         yield event.chain_result([node])
+
+    @filter.command("xmtp")
+    @filter.command("tp")
+    async def xmtp(self, event: AstrMessageEvent):
+        try:
+            messages = self.fetch_storm_messages(self.resolve_sender_id(event))
+        except Exception as exc:
+            logger.exception("Failed to fetch storm data")
+            yield event.plain_result(f"获取台风信息失败: {exc}")
+            return
+
+        if not messages:
+            yield event.plain_result("当前暂无台风数据。")
+            return
+
+        yield event.chain_result(messages)
 
     async def terminate(self):
         """插件销毁方法"""
