@@ -213,7 +213,6 @@ class XMutils(Star):
         )
         yield event.chain_result([node])
 
-    @filter.command("xmtp")
     @filter.command("tp")
     async def xmtp(self, event: AstrMessageEvent):
         try:
@@ -229,7 +228,6 @@ class XMutils(Star):
 
         yield event.chain_result(messages)
 
-    @filter.command("xmrd")
     @filter.command("rd")
     async def xmrd(self, event: AstrMessageEvent):
         try:
