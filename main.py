@@ -158,7 +158,6 @@ class XMutils(Star):
     async def initialize(self):
         """插件初始化方法"""
 
-    @filter.command("xmhelp")
     @filter.command("help")
     async def xmhelp(self, event: AstrMessageEvent):
         help_msg = (
@@ -172,7 +171,6 @@ class XMutils(Star):
         logger.info(event.get_messages())
         yield event.plain_result(help_msg)
 
-    @filter.command("xmjrrp")
     @filter.command("jrrp")
     async def xmjrrp(self, event: AstrMessageEvent):
         qid = event.message_obj.sender.user_id
@@ -185,7 +183,6 @@ class XMutils(Star):
         msg = f"您今日的幸运指数是 {lucknum}/100，{res}。"
         yield event.plain_result(msg)
 
-    @filter.command("xmdice")
     @filter.command("dice")
     async def xmdice(self, event: AstrMessageEvent, incantation: str):
         result = self.parse_dice_expressions(incantation)
