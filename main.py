@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 import asyncio
 import io
+import os
 import random
 import re
 
@@ -16,15 +17,20 @@ RADAR_URL_TEMPLATE = (
     "SEVP_AOC_RDCP_SLDAS3_ECREF_AECN_L88_PI_{t:%Y%m%d%H%M}00000.PNG"
 )
 RADAR_FRAME_INTERVAL = 6  # 分钟，雷达图每 6 分钟一个时次
-RADAR_FRAME_COUNT = 12  # 拼进 GIF 的帧数，12 帧约 1 小时
-RADAR_NEWEST_LOOKBACK = 8  # 查找最新一帧时向前探测的时次数
+RADAR_FRAME_COUNT = 10  # 默认拼进 GIF 的帧数，10 帧约 1 小时
+RADAR_MAX_FRAME_COUNT = 16  # 允许用户指定的最大帧数
+RADAR_NEWEST_LOOKBACK = 4  # 查找最新一帧时向前探测的时次数
 RADAR_MAX_LOOKBACK = 48  # 收集帧时最多向前探测的时次数
-RADAR_PROBE_WINDOW = 4  # 每轮并发探测的时次数
-RADAR_GIF_WIDTH = 400  # GIF 缩放后的宽度，用于控制体积
+RADAR_PROBE_WINDOW = 12  # 每轮处理的时次数
+RADAR_GIF_WIDTH = 0  # GIF 宽度，0 表示保持原始分辨率
 RADAR_GIF_DURATION = 200  # 每帧播放时长（毫秒）
-RADAR_GIF_MAX_BYTES = 3_500_000  # 超过该体积时进一步缩小
-RADAR_DOWNLOAD_WORKERS = 8  # 并发下载雷达图的线程数
+RADAR_GIF_MAX_BYTES = 4_000_000  # 超过该体积时缩小
+RADAR_DOWNLOAD_WORKERS = 12  # 并发下载雷达图的线程数
+RADAR_CACHE_TTL_HOURS = 6  # 雷达图本地缓存的保留时长
+RADAR_WARMUP_ENABLED = True  # 后台预热缓存，让 /xmrd 不用现下载
+RADAR_WARMUP_INTERVAL = 300  # 秒，后台检查新时次的间隔
 RADAR_REQUEST_TIMEOUT = 15.05
+RADAR_PROBE_TIMEOUT = 8  # 探测（HEAD）超时，避免慢连接长时间卡住
 RADAR_HEADERS = {
     "User-Agent": "XMutils/1.0",
     "Accept": "*/*",
@@ -161,6 +167,81 @@ class XMutils(Star):
 
         return messages
 
+    @classmethod
+    def radar_cache_dir(cls) -> str:
+        """雷达图缓存目录，历史时次的图片不会变，缓存下来可以省掉重复下载。"""
+        cached = getattr(cls, "_radar_cache_dir", None)
+        if cached is not None:
+            return cached
+
+        try:
+            from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
+
+            base = get_astrbot_plugin_data_path()
+        except Exception:
+            base = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+
+        path = os.path.join(str(base), "xmutils", "radar")
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError:
+            logger.warning(f"无法创建雷达图缓存目录，将不做本地缓存: {path}")
+            path = ""
+        cls._radar_cache_dir = path
+        return path
+
+    @classmethod
+    def radar_cache_path(cls, at: datetime):
+        directory = cls.radar_cache_dir()
+        if not directory:
+            return None
+        return os.path.join(directory, f"radar_{at:%Y%m%d%H%M}.png")
+
+    @classmethod
+    def read_cached_radar(cls, at: datetime):
+        path = cls.radar_cache_path(at)
+        if not path:
+            return None
+        try:
+            with open(path, "rb") as file:
+                content = file.read()
+        except OSError:
+            return None
+        if len(content) < 5000 or not content.startswith(b"\x89PNG"):
+            return None
+        return content
+
+    @classmethod
+    def write_cached_radar(cls, at: datetime, content: bytes):
+        path = cls.radar_cache_path(at)
+        if not path:
+            return
+        temp = f"{path}.{os.getpid()}.part"
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(temp, "wb") as file:
+                file.write(content)
+            os.replace(temp, path)
+        except OSError:
+            logger.warning(f"写入雷达图缓存失败: {path}")
+
+    @classmethod
+    def prune_radar_cache(cls, ttl_hours: int = RADAR_CACHE_TTL_HOURS):
+        directory = cls.radar_cache_dir()
+        if not directory:
+            return
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=ttl_hours)).timestamp()
+        try:
+            entries = list(os.scandir(directory))
+        except OSError:
+            return
+        for entry in entries:
+            try:
+                if entry.is_file() and entry.stat().st_mtime < cutoff:
+                    os.remove(entry.path)
+            except OSError:
+                continue
+
     @staticmethod
     def radar_url(at: datetime) -> str:
         return RADAR_URL_TEMPLATE.format(t=at)
@@ -184,7 +265,7 @@ class XMutils(Star):
         """探测某个时次的雷达图是否存在：True/False，网络异常时返回 None。"""
         try:
             response = requests.head(
-                cls.radar_url(at), headers=RADAR_HEADERS, timeout=RADAR_REQUEST_TIMEOUT
+                cls.radar_url(at), headers=RADAR_HEADERS, timeout=RADAR_PROBE_TIMEOUT
             )
         except requests.RequestException:
             return None
@@ -197,7 +278,7 @@ class XMutils(Star):
 
     @classmethod
     def download_radar_slot(cls, at: datetime):
-        """下载某个时次的雷达图，失败时返回 None。"""
+        """下载某个时次的雷达图并写入缓存，失败时返回 None。"""
         try:
             response = requests.get(
                 cls.radar_url(at), headers=RADAR_HEADERS, timeout=RADAR_REQUEST_TIMEOUT
@@ -207,36 +288,68 @@ class XMutils(Star):
 
         if response.status_code != 200 or len(response.content) < 5000:
             return None
+        cls.write_cached_radar(at, response.content)
         return at, response.content
 
     @classmethod
+    def find_newest_radar_slot(cls):
+        """并发探测最近几个时次，返回最新一张可用的雷达图时次。"""
+        slots = cls.radar_slots(RADAR_NEWEST_LOOKBACK)
+        with ThreadPoolExecutor(max_workers=len(slots)) as pool:
+            states = list(pool.map(cls.radar_slot_exists, slots))
+
+        for at, state in zip(slots, states):
+            if state is True:
+                return at
+        for at, state in zip(slots, states):
+            if state is None:  # 探测失败时先按它取，反正后续下载还会再筛一次
+                return at
+        return None
+
+    @classmethod
     def collect_radar_frames(cls, frame_count: int = RADAR_FRAME_COUNT):
-        """从最近的时次往前收集 frame_count 张可用的雷达图，按时间正序返回 (时间, 图片字节)。"""
-        newest = None
-        for at in cls.radar_slots(RADAR_NEWEST_LOOKBACK):
-            if cls.radar_slot_exists(at) is not False:
-                newest = at
-                break
+        """从最近的时次往前收集 frame_count 张雷达图，按时间正序返回 (时间, 图片字节)。"""
+        newest = cls.find_newest_radar_slot()
         if newest is None:
             raise RuntimeError("最近几个小时没有可用的华东雷达图")
 
         frames = []
         slots = cls.radar_slots(RADAR_MAX_LOOKBACK, newest)
-        while slots and len(frames) < frame_count:
-            window, slots = slots[:RADAR_PROBE_WINDOW], slots[RADAR_PROBE_WINDOW:]
-            with ThreadPoolExecutor(max_workers=len(window)) as pool:
-                exists = list(pool.map(cls.radar_slot_exists, window))
+        for start in range(0, len(slots), RADAR_PROBE_WINDOW):
+            if len(frames) >= frame_count:
+                break
+            # 只从最新的一端取还需要的时次，保证 GIF 一定包含最新一张图
+            need = min(RADAR_PROBE_WINDOW, frame_count - len(frames))
+            candidates = slots[start : start + need]
 
-            wanted = [at for at, ok in zip(window, exists) if ok is not False]
-            wanted = wanted[: frame_count - len(frames)]
-            if not wanted:
-                continue
+            loaded = {}
+            unknown = []
+            for at in candidates:
+                content = cls.read_cached_radar(at)
+                if content:
+                    loaded[at] = content
+                else:
+                    unknown.append(at)
 
-            workers = min(len(wanted), RADAR_DOWNLOAD_WORKERS)
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                downloaded = pool.map(cls.download_radar_slot, wanted)
-                frames.extend(frame for frame in downloaded if frame)
+            if unknown:
+                with ThreadPoolExecutor(max_workers=len(unknown)) as pool:
+                    states = list(pool.map(cls.radar_slot_exists, unknown))
+                missing = [
+                    at
+                    for at, state in zip(unknown, states)
+                    if state is not False and at not in loaded
+                ]
+                if missing:
+                    workers = min(len(missing), RADAR_DOWNLOAD_WORKERS)
+                    with ThreadPoolExecutor(max_workers=workers) as pool:
+                        for frame in pool.map(cls.download_radar_slot, missing):
+                            if frame:
+                                loaded[frame[0]] = frame[1]
 
+            frames.extend((at, loaded[at]) for at in candidates if at in loaded)
+
+        cls.prune_radar_cache()
+        frames = frames[:frame_count]
         frames.reverse()
         return frames
 
@@ -289,6 +402,23 @@ class XMutils(Star):
 
     async def initialize(self):
         """插件初始化方法"""
+        if not RADAR_WARMUP_ENABLED:
+            return
+        task = getattr(self, "_radar_warmer_task", None)
+        if task is not None and not task.done():
+            return
+        self._radar_warmer_task = asyncio.create_task(self._warm_radar_cache())
+
+    async def _warm_radar_cache(self):
+        """后台把最近一段时间的雷达图缓存好，用户调用时只需要拼 GIF。"""
+        while True:
+            try:
+                await asyncio.to_thread(self.collect_radar_frames, RADAR_FRAME_COUNT)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(f"雷达图缓存预热失败，稍后重试: {exc}")
+            await asyncio.sleep(RADAR_WARMUP_INTERVAL)
 
     @filter.command("help")
     async def xmhelp(self, event: AstrMessageEvent):
@@ -298,7 +428,7 @@ class XMutils(Star):
             "[xmjrrp] 用于查看今日人品\n"
             "[xmdice 3d6 2d10] 掷骰，支持空格、+、中英文逗号和换行分隔多个骰式\n"
             "[xmtp] 台风信息\n"
-            "[xmrd] 华东雷达回波动图（近一小时 GIF）\n"
+            "[xmrd 10] 华东雷达回波动图（默认 10 帧≈1 小时，可写 2~16）\n"
         )
         logger.info(event.get_messages())
         yield event.plain_result(help_msg)
@@ -358,35 +488,37 @@ class XMutils(Star):
         yield event.chain_result(messages)
 
     @filter.command("rd")
-    async def xmrd(self, event: AstrMessageEvent):
+    async def xmrd(self, event: AstrMessageEvent, frames: int = RADAR_FRAME_COUNT):
         from astrbot.api.message_components import Image, Plain
 
         try:
-            frames = await asyncio.to_thread(self.collect_radar_frames)
-            if not frames:
+            frame_count = max(2, min(int(frames), RADAR_MAX_FRAME_COUNT))
+            frames_data = await asyncio.to_thread(
+                self.collect_radar_frames, frame_count
+            )
+            if not frames_data:
                 raise RuntimeError("未找到可用的华东雷达图")
 
-            if len(frames) > 1:
-                payload = await asyncio.to_thread(self.build_radar_gif, frames)
-                # 图片过大时逐级缩小，避免适配器上传失败
-                for width in (320, 260):
-                    if len(payload) <= RADAR_GIF_MAX_BYTES:
-                        break
+            if len(frames_data) > 1:
+                payload = await asyncio.to_thread(self.build_radar_gif, frames_data)
+                # 体积过大时抽帧重建，保持原始分辨率不牺牲清晰度
+                while len(payload) > RADAR_GIF_MAX_BYTES and len(frames_data) > 4:
+                    frames_data = frames_data[::2]
                     payload = await asyncio.to_thread(
-                        self.build_radar_gif, frames, width
+                        self.build_radar_gif, frames_data
                     )
             else:
-                payload = frames[0][1]
+                payload = frames_data[0][1]
         except Exception as exc:
             logger.exception("Failed to fetch radar images")
             yield event.plain_result(f"获取华东雷达图失败: {exc}")
             return
 
-        start = frames[0][0].astimezone(RADAR_TIMEZONE)
-        end = frames[-1][0].astimezone(RADAR_TIMEZONE)
-        if len(frames) > 1:
+        start = frames_data[0][0].astimezone(RADAR_TIMEZONE)
+        end = frames_data[-1][0].astimezone(RADAR_TIMEZONE)
+        if len(frames_data) > 1:
             caption = (
-                f"华东雷达回波动图，{len(frames)} 帧，"
+                f"华东雷达回波动图，{len(frames_data)} 帧，"
                 f"{start:%H:%M} ~ {end:%H:%M}（北京时间）"
             )
         else:
@@ -402,3 +534,10 @@ class XMutils(Star):
 
     async def terminate(self):
         """插件销毁方法"""
+        task = getattr(self, "_radar_warmer_task", None)
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
